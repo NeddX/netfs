@@ -1,0 +1,7 @@
+bin/*
+builds/*
+.cache/*
+.ccls/*
+.clangd/*
+.ignore/*
+compile_commands.json
