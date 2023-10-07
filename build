@@ -7,7 +7,9 @@ echo "Build started"
 export CC=$(which clang)
 export CXX=$(which clang++)
 
-platform="linux-x86_64"
+kernel=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m | tr '[:upper:]' '[:lower:]')
+platform="$kernel-$arch"
 build_conf="Debug"
 cpwd=$pwd
 
@@ -36,10 +38,13 @@ echo "Building..."
 cmake --build ./
 cp "compile_commands.json" ../../
 
-#if [ ! -d "../../bin" ]; then
-#    mkdir -p "../../bin"
-#fi
-#cp "ALVM/ALVM" ../../bin/alvm
-#cp "ALASM/ALASM" ../../bin/alasm
+if [ ! -d "../../bin" ]; then
+    mkdir -p "../../bin"
+fi
+
+killall nfserver
+killall nfclient
+find ./ -type f -executable -exec sh -c 'cp {} ../../bin && echo exec: {}' \; 
+cp ../../assets/* ../../bin
 
 echo "Build finished."

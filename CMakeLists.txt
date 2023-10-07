@@ -22,6 +22,8 @@ else()
     endif()
 endif()
 
+include_directories("${CMAKE_SOURCE_DIR}/include/")
+
 if (UNIX)
     add_subdirectory("server")
 else()
