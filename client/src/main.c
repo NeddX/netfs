@@ -22,7 +22,7 @@ i32 main(const i32 argc, const char* argv[]) {
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    server_addr.sin_port = htons(7878);
+    server_addr.sin_port = htons(7777);
 
     if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0) {
         fprintf(stderr, "Connectionn with the server failed :(\n");
@@ -42,13 +42,15 @@ i32 main(const i32 argc, const char* argv[]) {
 
         write(sockfd, buffer, sizeof(buffer));
         memset(buffer, 0, sizeof(buffer));
-        read(sockfd, buffer, sizeof(buffer));
-        printf("recv: %s\n", buffer);
+        //read(sockfd, buffer, sizeof(buffer));
+        //printf("recv: %s\n", buffer);
 
+        /*
         if (!strncmp(buffer, "exit", 4)) {
             puts("Connection termination requested.");
             break;
         }
+        */
     }
 
     close(sockfd);

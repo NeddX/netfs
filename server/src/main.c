@@ -12,6 +12,16 @@ typedef struct _netfs_connection {
     usize id;
 } NetConnection;
 
+typedef enum _netfs_packet_type {
+NET_PACKET_MESSAGE,
+NET_PACKET_COMMAND,
+NET_PACKET_DOWNLOAD
+} NetPacketType;
+
+typedef struct _netfs_packet {
+
+} NetPacket;
+
 void parse_command(char* restrict str, const char*** args, usize* args_size, usize* arg_count) {
     // Parse the command by splitting it into tokens seperated by space, tab and new line characters.
     i32 i = 0;
@@ -24,6 +34,28 @@ void parse_command(char* restrict str, const char*** args, usize* args_size, usi
         *(*args + ++i) = strtok(NULL, " \t\n");
     }
     *arg_count = i;
+}
+
+void cmd_ls(NetConnection* restrict c, const char** args) {
+    char cwd[100];
+    if (getcwd(cwd, sizeof(cwd)) != 0) {
+
+    } else {
+
+    }
+
+    struct direntry* entry;
+
+
+    //DIR* dp = opendir();
+}
+
+void cmd_download(NetConnection* restrict c, const char** args) {
+
+}
+
+void cmd_upload(NetConnection* restrict c, const char** args) {
+
 }
 
 void* handle_client_async(void* args) {
@@ -47,12 +79,16 @@ void* handle_client_async(void* args) {
             break;
         }
         buffer[bytes_received] = 0;
-        printf("recv from [%s:%u] (%zu): %s\n", inet_ntoa(c->addr.sin_addr), c->addr.sin_port, c->id, buffer);
+        printf("Recv from [%s:%u] (%zu): %s\n", inet_ntoa(c->addr.sin_addr), c->addr.sin_port, c->id, buffer);
 
         parse_command((char*)buffer, &cargs, &args_size, &arg_count);
 
-        for (usize i = 0; i < arg_count; ++i) {
-            puts(*(cargs + i));
+        if (!strcmp(cargs[0], "ls")) {
+            cmd_ls(c, args);
+        } else if (!strcmp(cargs[0], "download")) {
+            cmd_download(c, cargs);
+        } else if (!strcmp(cargs[0], "upload")) {
+            cmd_upload(c, args);
         }
 
         //send(c->socket, buffer, strlen((const char*)buffer), 0);
@@ -65,7 +101,7 @@ void* handle_client_async(void* args) {
 
 i32 main(const i32 argc, const char* argv[]) {
     const u32 HOST = INADDR_ANY;
-    const u16 PORT = 7878;
+    const u16 PORT = 7777;
     const u32 MAX_CONNS = 1;
     const usize MAX_BUFFER_SIZE = 1024;
 
@@ -106,7 +142,7 @@ i32 main(const i32 argc, const char* argv[]) {
         NetConnection* conn = (NetConnection*)malloc(sizeof(NetConnection));
         conn->socket = new_socket;
         conn->addr = client_addr;
-        conn->id = id;
+        conn->id = id++;
 
         pthread_t thread;
         if (pthread_create(&thread, NULL, handle_client_async, (void*)conn) != 0) {
