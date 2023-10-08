@@ -58,6 +58,20 @@ void cmd_upload(NetConnection* restrict c, const char** args) {
 
 }
 
+void* handle_client_send_async(void* args) {
+    const usize BUFFER_SIZE = 1024 * 1024;
+
+    NetConnection* c = (NetConnection*)args;
+    u8* buffer = (u8*)malloc(BUFFER_SIZE);
+
+    while (true) {
+        printf("> ");
+        scanf("%s", buffer);
+
+        send(c->socket, buffer, strlen((const char*)buffer), 0);
+    }
+}
+
 void* handle_client_async(void* args) {
     const usize BUFFER_SIZE = 1024 * 1024;
 
@@ -68,6 +82,15 @@ void* handle_client_async(void* args) {
     usize args_size = 10 * sizeof(char*);
     usize arg_count = 0;
     const char** cargs = (const char**)malloc(args_size);
+
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, handle_client_send_async, (void*)c) != 0) {
+        fprintf(stderr, "Failed to create a thread.\n");
+        perror("pthread_create");
+        free(buffer);
+        free(args);
+        pthread_exit(NULL);
+    }
 
     while (true) {
         bytes_received = recv(c->socket, buffer, BUFFER_SIZE, 0);
@@ -81,8 +104,9 @@ void* handle_client_async(void* args) {
         buffer[bytes_received] = 0;
         printf("Recv from [%s:%u] (%zu): %s\n", inet_ntoa(c->addr.sin_addr), c->addr.sin_port, c->id, buffer);
 
-        parse_command((char*)buffer, &cargs, &args_size, &arg_count);
+        //parse_command((char*)buffer, &cargs, &args_size, &arg_count);
 
+        /*
         if (!strcmp(cargs[0], "ls")) {
             cmd_ls(c, args);
         } else if (!strcmp(cargs[0], "download")) {
@@ -90,8 +114,8 @@ void* handle_client_async(void* args) {
         } else if (!strcmp(cargs[0], "upload")) {
             cmd_upload(c, args);
         }
+        */
 
-        //send(c->socket, buffer, strlen((const char*)buffer), 0);
     }
 
     free(buffer);
@@ -100,8 +124,9 @@ void* handle_client_async(void* args) {
 }
 
 i32 main(const i32 argc, const char* argv[]) {
+    srand(time(0));
     const u32 HOST = INADDR_ANY;
-    const u16 PORT = 7777;
+    const u16 PORT = rand() % 8000;
     const u32 MAX_CONNS = 1;
     const usize MAX_BUFFER_SIZE = 1024;
 
