@@ -1,5 +1,26 @@
-#include "cssockets.h"
+#include <cssockets.h>
+#include <csthreads.h>
 #include <stdnfs.h>
+
+ThreadArg net_client_handler(ThreadArg args) {
+    Socket* client = (Socket*)args;
+
+    usize buffer_size = 1024 * 1024;
+    u8* buffer = (u8*)malloc(buffer_size);
+    while (client->connected) {
+        memset(buffer, 0, buffer_size);
+        i32 bytes_received = Socket_Receieve(client, buffer, buffer_size, 0);
+        if (!client->connected) {
+            puts("Client disconnected.");
+            break;
+        }
+        printf("Received from [%s:%hu]: %s", client->remote_ep.address.addr_str, client->remote_ep.port, (const char*)buffer);
+        Socket_Send(client, buffer, buffer_size, 0);
+    }
+
+    Socket_Dispose(client);
+    return NULL;
+}
 
 i32 main() {
     srand(time(0));
@@ -18,27 +39,19 @@ i32 main() {
     Socket_Listen(socket, 10);
     printf("Listening on 127.0.0.1:%hu...\n", ep.port);
 
-    usize buffer_size = 1024 * 1024;
-    u8* buffer = (u8*)malloc(buffer_size);
-    Socket* client = Socket_Accept(socket);
-    if (!client)
-        fputs("Client connection failed.\n", stderr);
-    else {
-        printf("Client [%s:%hu] connected.\n", client->remote_ep.address.addr_str, client->remote_ep.port);
-    }
-
     while (true) {
-        memset(buffer, 0, buffer_size);
-        i32 bytes_received = Socket_Receieve(client, buffer, buffer_size, 0);
-        if (!client->connected) {
-            puts("Client disconnect.");
-            break;
-        }
-        printf("Received from [%s:%hu]: %s", client->remote_ep.address.addr_str, client->remote_ep.port, (const char*)buffer);
-        Socket_Send(client, buffer, buffer_size, 0);
+        Socket* client = Socket_Accept(socket);
+        if (client)
+            printf("Client [%s:%hu] connected.\n", client->remote_ep.address.addr_str, client->remote_ep.port);
+        
+        // Intentional memory leak.
+        ThreadAttributes attr;
+        attr.initial_stack_size = 0;
+        attr.args = (ThreadArg)client;
+        attr.routine = net_client_handler;
+        Thread* client_thread = Thread_New(&attr);
     }
 
-    Socket_Dispose(client);
     Socket_Dispose(socket);
     CSSocket_Dispose();
     return 0;

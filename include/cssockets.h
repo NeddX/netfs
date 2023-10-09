@@ -13,17 +13,19 @@
 #define CS_IPV6_MAX (size_t)40
 
 #ifdef _WIN32
-#define CS_PLATFORM_NT;
+#define CS_PLATFORM_NT ;
 #define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>
-#include <winsocks2.h>
+#include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 
-#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
-typedef uintptr socket_t;
+typedef uintptr_t socket_t;
+
+#define restrict __restrict
 
 #define CS_CLOSE_SOCKET(s) closesocket(s)
 #define CS_CLEANUP() WSACleanup()
@@ -68,7 +70,6 @@ typedef enum _cs_protocol_type {
 typedef enum _cs_ip_address_type {
     IPAddressType_Any = INADDR_ANY,
     IPAddressType_Broadcast = INADDR_BROADCAST,
-    IPAddressType_RTEDummy = INADDR_DUMMY,
     IPAddressType_None = INADDR_NONE,
     IPAddressType_IPv4LPStr = 0xFEEFAAF00,
     IPAddressType_IPv6LPStr = 0xDEADFACE0

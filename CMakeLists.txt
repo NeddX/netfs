@@ -22,13 +22,14 @@ else()
     endif()
 endif()
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+if (MSVC)
+	#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /fsanitize=address /MTd")
+	# MTd for static CRT
+else()
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+endif()
 
 include_directories("${CMAKE_SOURCE_DIR}/include/")
 
-if (UNIX)
-    add_subdirectory("server")
-else()
-    message("[!]: Platform not compatiable for the compilation of the server.")
-endif()
+add_subdirectory("server")
 add_subdirectory("client")

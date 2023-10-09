@@ -10,6 +10,10 @@ void* handle_server_read(void* args) {
     }
 }
 
+void __stdcall cool_func() {
+
+}
+
 i32 main(const i32 argc, const char* argv[]) {
     u16 port;
 
@@ -43,12 +47,13 @@ i32 main(const i32 argc, const char* argv[]) {
     char buffer[1024];
     usize n;
 
-    pthread_t thread;
+    /*pthread_t thread;
     if (pthread_create(&thread, NULL, handle_server_read, (void*)sockfd) != 0) {
         fprintf(stderr, "Failed to create a thread.\n");
         perror("pthread_create");
         exit(EXIT_FAILURE);
     }
+    */
 
     while (true) {
         memset(buffer, 0, sizeof(buffer));

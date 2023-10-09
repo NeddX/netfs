@@ -7,13 +7,13 @@
 #include <string.h>
 
 // Kernel user-space API
-#include <unistd.h>
+//#include <unistd.h>
 
 // Concurrency
-#include <pthread.h>
+//#include <pthread.h>
 
 // I/O
-#include <dirent.h>
+//#include <dirent.h>
 
 // Handy header only cross-platform (Linux & Windows) net wrapper around BSD sockets
 #include <cssockets.h>
