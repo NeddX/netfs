@@ -23,13 +23,15 @@ i32 main() {
     Socket* client = Socket_Accept(socket);
     if (!client)
         fputs("Client connection failed.\n", stderr);
+    else {
+        printf("Client [%s:%hu] connected.\n", client->remote_ep.address.addr_str, client->remote_ep.port);
+    }
 
     while (true) {
         memset(buffer, 0, buffer_size);
         i32 bytes_received = Socket_Receieve(client, buffer, buffer_size, 0);
-        if (bytes_received <=0) {
-            perror("recv");
-            puts("Client error or disconnect.");
+        if (!client->connected) {
+            puts("Client disconnect.");
             break;
         }
         printf("Received from [%s:%hu]: %s", client->remote_ep.address.addr_str, client->remote_ep.port, (const char*)buffer);

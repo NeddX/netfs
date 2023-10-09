@@ -22,6 +22,8 @@ else()
     endif()
 endif()
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+
 include_directories("${CMAKE_SOURCE_DIR}/include/")
 
 if (UNIX)

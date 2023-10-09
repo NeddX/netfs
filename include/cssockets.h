@@ -251,6 +251,7 @@ Socket* Socket_Accept(Socket* restrict s) {
         return NULL;
     }
 
+    client->connected = true;
     client->remote_ep.addressFamily = client->remote_ep.address.ipv4_addr.sin_family;
     client->remote_ep.port = client->remote_ep.address.ipv4_addr.sin_port;
     strcpy(client->remote_ep.address.addr_str, inet_ntoa(client->remote_ep.address.ipv4_addr.sin_addr));
@@ -258,11 +259,21 @@ Socket* Socket_Accept(Socket* restrict s) {
 }
 
 int32_t Socket_Receieve(Socket* restrict s, uint8_t* restrict buffer, const size_t buffer_size, const int32_t flags) {
-    return recv(s->_native_socket, buffer, buffer_size, flags);
+    int32_t received_bytes = recv(s->_native_socket, buffer, buffer_size, flags);
+    if (received_bytes == 0 || received_bytes == CS_SOCKET_ERROR) {
+        s->connected = false;
+        CS_CLOSE_SOCKET(s->_native_socket);
+    }
+    return received_bytes;
 }
 
 int32_t Socket_Send(Socket* restrict s, const uint8_t* restrict buffer, const size_t buffer_size, const int32_t flags) {
-    return send(s->_native_socket, buffer, buffer_size, flags);
+    int32_t sent_bytes = send(s->_native_socket, buffer, buffer_size, flags);
+    if (sent_bytes == CS_SOCKET_ERROR) {
+        s->connected = false;
+        CS_CLOSE_SOCKET(s->_native_socket);
+    }
+    return sent_bytes;
 }
 
 #endif // CROSSPLATFORM_SOCKETS_H
