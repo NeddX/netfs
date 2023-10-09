@@ -1,11 +1,5 @@
 #include <stdnfs.h>
 
-#if defined(__linux__) || defined(__APPLE__)
-typedef int32_t socket_t;
-#elif defined(_WIN32)
-typedef uint32_t socket_t;
-#endif
-
 void* handle_server_read(void* args) {
     socket_t sockfd = (socket_t)args;
     char buffer[2048];

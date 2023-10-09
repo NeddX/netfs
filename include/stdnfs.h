@@ -6,13 +6,6 @@
 #include <stdint.h>
 #include <string.h>
 
-// Kernel sockets
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-
 // Kernel user-space API
 #include <unistd.h>
 
@@ -21,6 +14,9 @@
 
 // I/O
 #include <dirent.h>
+
+// Handy header only cross-platform (Linux & Windows) net wrapper around BSD sockets
+#include <cssockets.h>
 
 #define true 1
 #define false 0
