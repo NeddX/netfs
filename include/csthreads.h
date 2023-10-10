@@ -173,6 +173,7 @@ Thread* Thread_New(ThreadAttributes* restrict attribs) {
 		sizeof(struct _ct_thread_routine_info)
 	);
 
+	thd->result_ptr = NULL;
 	info->owner = thd;
 	info->routine = attribs->routine;
 	info->args_ptr = attribs->args;

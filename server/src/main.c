@@ -2,6 +2,8 @@
 #include <csthreads.h>
 #include <stdnfs.h>
 
+
+
 ThreadArg net_client_handler(ThreadArg args) {
     Socket* client = (Socket*)args;
 
@@ -17,9 +19,7 @@ ThreadArg net_client_handler(ThreadArg args) {
         printf("Received from [%s:%hu]: %s", client->remote_ep.address.addr_str, client->remote_ep.port, (const char*)buffer);
         Socket_Send(client, buffer, buffer_size, 0);
     }
-
-    Socket_Dispose(client);
-    return NULL;
+    return client;
 }
 
 i32 main() {
@@ -50,6 +50,10 @@ i32 main() {
         attr.args = (ThreadArg)client;
         attr.routine = net_client_handler;
         Thread* client_thread = Thread_New(&attr);
+
+        while (client_thread->result_ptr == NULL) ;
+
+        Socket_Dispose((Socket*)client_thread->result_ptr);
     }
 
     Socket_Dispose(socket);
