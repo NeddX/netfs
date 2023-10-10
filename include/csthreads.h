@@ -1,6 +1,10 @@
 #ifndef CROSSPLATFORM_THREADS_H
 #define CROSSPLATFORM_THREADS_H
 
+// Cross-platform Threads
+// Windows does NOT use POSIX model for its threads thus pthreads are incompatible for Windows.
+// Lightweight cross-platform (Linux, Windows, Mac) wrapper for threading.
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -15,9 +19,12 @@
 #define CT_ARCH_32
 #endif
 
+// MSVC shenanigans.
 #ifdef _MSC_VER
 #define restrict __restrict
 #define stdcall __stdcall
+
+// gcc and clang shenanigans.
 #elif defined(__clang__) || defined(__GNUC__)
 #define stdcall __attribute__((stdcall))
 #endif
@@ -36,17 +43,20 @@
 
 #include <pthread.h>
 
+// gcc and clang shenanigans.
 #if defined(__clang__) || defined(__GNUC__)
 #define stdcall __attribute__((stdcall))
 #endif
 
 #endif
 
+// Enum representing operation result when working with a Mutex.
 typedef enum _cs_mutex_result {
 	MutexResult_Success,
 	MutexResult_Error
 } MutexResult;
 
+// Mutex struct.
 typedef struct _ct_mutex {
 #ifdef CT_PLATFORM_NT
 	HANDLE _native_mutex;
@@ -55,6 +65,7 @@ typedef struct _ct_mutex {
 #endif
 } Mutex;
 
+// Constructor for Mutex.
 Mutex* Mutex_New() {
 	Mutex* mut = (Mutex*)malloc(sizeof(Mutex));
 #ifdef CT_PLATFORM_NT
@@ -75,6 +86,7 @@ Mutex* Mutex_New() {
 	return mut;
 }
 
+// Try and lock the mutex, return the operation result.
 MutexResult Mutex_Lock(Mutex* restrict m) {
 #ifdef CT_PLATFORM_NT
 	uint32_t ret = WaitForSingleObject(m->_native_mutex, INFINITE);
