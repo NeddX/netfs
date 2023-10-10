@@ -21,6 +21,7 @@
 #define true 1
 #define false 0
 
+typedef int8_t bool;
 typedef size_t usize;
 typedef uintptr_t uintptr;
 typedef intptr_t intptr;

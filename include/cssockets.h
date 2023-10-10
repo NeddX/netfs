@@ -97,7 +97,7 @@ typedef struct _cs_ip_address {
     IPAddressType type;
     struct sockaddr_in ipv4_addr;
     struct sockaddr_in6 ipv6_addr;
-    char addr_str[CS_IPV6_MAX];
+    char str[CS_IPV6_MAX];
 } IPAddress;
 
 // Generic constructor for IPAddress.
@@ -116,10 +116,9 @@ IPAddress IPAddress_Parse(const char* restrict addrv4_str) {
     if (res != 1) {
         fprintf(stderr, "CS_Socket: Failed to parse %s as a valid IPv4 address.\n", addrv4_str);
         perror("native error");
-        CS_CLEANUP();
         exit(EXIT_FAILURE);
     }
-    strcpy(addr.addr_str, addrv4_str);
+    strcpy(addr.str, addrv4_str);
     return addr;
 }
 
@@ -132,10 +131,9 @@ IPAddress IPAddress_ParseV6(const char* restrict addrv6_str) {
     if (res != 1) {
         fprintf(stderr, "CS_Socket: Failed to parse %s as a valid IPv6 address.\n", addrv6_str);
         perror("native error");
-        CS_CLEANUP();
         exit(EXIT_FAILURE);
     }
-    strcpy(addr.addr_str, addrv6_str);
+    strcpy(addr.str, addrv6_str);
     return addr;
 }
 
@@ -206,7 +204,6 @@ Socket* Socket_New(const AddressFamily family, const SocketType stype, const Pro
         fputs("CS_Sockets: Failed to create socket.\n", stderr);
         perror("native error");
         CS_CLOSE_SOCKET(s->_native_socket);
-        CS_CLEANUP();
         free(s);
         return NULL;
     }
@@ -256,7 +253,6 @@ int32_t Socket_Bind(Socket* restrict s, IPEndPoint ep) {
         fputs("CS_Sockets: Failed to bind socket.\n", stderr);
         perror("native error");
         CS_CLOSE_SOCKET(s->_native_socket);
-        CS_CLEANUP();
         return CS_SOCKET_ERROR;
     }
     return CS_SOCKET_SUCCESS;
@@ -267,7 +263,20 @@ int32_t Socket_Listen(Socket* restrict s, const size_t max_clients) {
     if (listen(s->_native_socket, max_clients) == CS_SOCKET_ERROR) {
         fputs("CS_Socket: Listening failed.\n", stderr);
         CS_CLOSE_SOCKET(s->_native_socket);
-        CS_CLEANUP();
+        return CS_SOCKET_ERROR;
+    }
+    return CS_SOCKET_SUCCESS;
+}
+
+// Try to connection to an endpoint.
+// TODO: Implement timeout system.
+int32_t Socket_Connect(Socket* restrict s) {
+    if (connect(
+            s->_native_socket,
+            (struct sockaddr*)&s->remote_ep.address.ipv4_addr,
+            sizeof(s->remote_ep.address.ipv4_addr)) == CS_SOCKET_ERROR) {
+        fputs("CS_Sockets: Connection with the remote failed.\n", stderr);
+        perror("native error");
         return CS_SOCKET_ERROR;
     }
     return CS_SOCKET_SUCCESS;
@@ -294,7 +303,7 @@ Socket* Socket_Accept(Socket* restrict s) {
     client->connected = true;
     client->remote_ep.addressFamily = client->remote_ep.address.ipv4_addr.sin_family;
     client->remote_ep.port = client->remote_ep.address.ipv4_addr.sin_port;
-    strcpy(client->remote_ep.address.addr_str, inet_ntoa(client->remote_ep.address.ipv4_addr.sin_addr));
+    strcpy(client->remote_ep.address.str, inet_ntoa(client->remote_ep.address.ipv4_addr.sin_addr));
     return client;
 }
 
@@ -305,6 +314,7 @@ int32_t Socket_Receieve(Socket* restrict s, uint8_t* restrict buffer, const size
     if (received_bytes == 0 || received_bytes == CS_SOCKET_ERROR) {
         s->connected = false;
         CS_CLOSE_SOCKET(s->_native_socket);
+        return CS_SOCKET_ERROR;
     }
     return received_bytes;
 }
