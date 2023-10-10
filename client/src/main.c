@@ -10,10 +10,6 @@ void* handle_server_read(void* args) {
     }
 }
 
-void __stdcall cool_func() {
-
-}
-
 i32 main(const i32 argc, const char* argv[]) {
     u16 port;
 

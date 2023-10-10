@@ -65,7 +65,12 @@ Mutex* Mutex_New() {
 		return NULL;
 	}
 #elif defined(CT_PLATFORM_UNIX)
-	mut->_native_mutex = PTHREAD_MUTEX_INITIALIZER;
+	if (pthread_mutex_init(&mut->_native_mutex, NULL) != 0) {
+		fputs("CS_Threads: Mutex initialization failed.\n", stderr);
+		perror("native error");
+		free(mut);
+		return NULL;
+	}
 #endif
 	return mut;
 }
@@ -73,7 +78,7 @@ Mutex* Mutex_New() {
 MutexResult Mutex_Lock(Mutex* restrict m) {
 #ifdef CT_PLATFORM_NT
 	uint32_t ret = WaitForSingleObject(m->_native_mutex, INFINITE);
-#elif defined(CT_PLATFORM_NT)
+#elif defined(CT_PLATFORM_UNIX)
 	int32_t ret = pthread_mutex_lock(&m->_native_mutex);
 #endif
 	if (!ret)
@@ -89,7 +94,7 @@ MutexResult Mutex_Release(Mutex* restrict m) {
 	else
 		return MutexResult_Error;
 #elif defined(CT_PLATFORM_UNIX)
-	if (!pthread_mutex_unlock(m->_native_mutex))
+	if (!pthread_mutex_unlock(&m->_native_mutex))
 		return MutexResult_Success;
 	else
 		return MutexResult_Error;
