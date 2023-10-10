@@ -2,7 +2,7 @@
 #include <csthreads.h>
 #include <stdnfs.h>
 
-
+u64 counter = 0;
 
 ThreadArg net_client_handler(ThreadArg args) {
     Socket* client = (Socket*)args;
@@ -22,9 +22,38 @@ ThreadArg net_client_handler(ThreadArg args) {
     return client;
 }
 
+ThreadArg count(ThreadArg args) {
+    Mutex* mutex = (Mutex*)args;
+    while (true) {
+        Mutex_Lock(mutex);
+        ++counter;
+        Mutex_Unlock(mutex);
+    }
+    return NULL;
+}
+
 i32 main() {
     srand(time(0));
     CSSocket_Init();
+
+    Mutex* mutex = Mutex_New();
+
+    while (true) {
+        ThreadAttributes attr;
+        attr.initial_stack_size = 0;
+        attr.routine = count;
+        attr.args = (ThreadArg)mutex;
+
+        for (usize i = 0; i < 10; ++i) {
+            Thread_New(&attr);
+        }
+
+        while (true) {
+            printf("\rCount: %lu                    ", counter);
+        }
+    }
+
+    Mutex_Dispose(mutex);
 
     Socket* socket = Socket_New(AddressFamily_InterNetwork, SocketType_Stream, ProtocolType_Tcp);
 

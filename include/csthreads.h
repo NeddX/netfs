@@ -99,7 +99,7 @@ MutexResult Mutex_Lock(Mutex* restrict m) {
 		return MutexResult_Error;
 }
 
-MutexResult Mutex_Release(Mutex* restrict m) {
+MutexResult Mutex_Unlock(Mutex* restrict m) {
 #ifdef CT_PLATFORM_NT
 	if (ReleaseMutex(m->_native_mutex) != 0)
 		return MutexResult_Success;

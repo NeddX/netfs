@@ -221,13 +221,13 @@ void Socket_Dispose(Socket* restrict s) {
 }
 
 // Try and bind our socket to the provided endpoint.
-int32_t Socket_Bind(Socket* restrict s, const IPEndPoint ep) {
+int32_t Socket_Bind(Socket* restrict s, IPEndPoint ep) {
     s->local_ep = ep;
 
     void* server_addr = NULL;
     size_t addr_size = 0;
 
-	// Resolve the endpoint.
+    // Resolve the endpoint.
     switch (ep.address.type) {
         case IPAddressType_IPv4LPStr:
             ep.address.ipv4_addr.sin_port = htons(ep.port);
