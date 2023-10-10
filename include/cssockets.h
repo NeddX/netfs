@@ -210,11 +210,36 @@ Socket* Socket_New(const AddressFamily family, const SocketType stype, const Pro
     return s;
 }
 
+int32_t Socket_From(Socket* restrict s, const AddressFamily family, const SocketType stype, const ProtocolType ptype) {
+    memset(s, 0, sizeof(Socket));
+
+    s->family = family;
+    s->stype = stype;
+    s->ptype = ptype;
+    s->connected = false;
+    s->timeout = 5000;
+
+    s->_native_socket = CS_INVALID_SOCKET;
+    s->_native_socket = socket(s->family, s->stype, s->ptype);
+    if (s->_native_socket == CS_INVALID_SOCKET) {
+        CS_CLOSE_SOCKET(s->_native_socket);
+        return CS_SOCKET_ERROR;
+    }
+    return CS_SOCKET_SUCCESS;
+}
+
 // Destructor for our socket.
 void Socket_Dispose(Socket* restrict s) {
     CS_CLOSE_SOCKET(s->_native_socket);
     memset(s, 0, sizeof(Socket));
     free(s);
+}
+
+// Disconnect the socket but keep the object.
+int32_t Socket_Disconnect(Socket* restrict s) {
+    if (CS_CLOSE_SOCKET(s->_native_socket) == CS_SOCKET_ERROR)
+        return CS_SOCKET_ERROR;
+    return CS_SOCKET_SUCCESS;
 }
 
 // Try and bind our socket to the provided endpoint.

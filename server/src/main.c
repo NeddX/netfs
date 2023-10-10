@@ -2,7 +2,7 @@
 #include <csthreads.h>
 #include <stdnfs.h>
 
-#define MAX_CLIENTS 2
+#define MAX_CLIENTS 256
 #define BUFFER_SIZE 1024 * 1024
 
 typedef struct _netfs_connection {
@@ -10,8 +10,47 @@ typedef struct _netfs_connection {
     bool available;
     usize id;
     Thread* owning_thread;
-    bool signal_termination;
 } Connection;
+
+typedef enum _netfs_packet_header_type {
+    PacketType_Message,
+    PacketType_StringCommand
+} PacketHeaderType;
+
+typedef struct _netfs_packet_header {
+    PacketHeaderType id;
+    usize size;
+} PacketHeader;
+
+
+typedef struct _netfs_packet {
+    PacketHeader header;
+    u8* buffer;
+} Packet;
+
+Packet* Packet_New(const PacketHeaderType type, const u8* restrict buffer, const usize size) {
+    Packet* packet = (Packet*)malloc(sizeof(Packet));
+    packet->buffer = (u8*)malloc(size);
+    memcpy(packet->buffer, buffer, size);
+
+    packet->header.id = type;
+    packet->header.size = size;
+    return packet;
+}
+
+
+void Packet_AddBuffer(Packet* restrict p, const u8* buffer, const usize size) {
+    if (size > 0) {
+        p->buffer = (u8*)realloc(p->buffer, p->header.size + size);
+        memcpy(p->buffer + p->header.size, buffer, size);
+        p->header.size += size;
+    }
+}
+
+void Packet_Dispose(Packet* restrict p) {
+    free(p->buffer);
+    free(p);
+}
 
 Connection* g_clients = NULL;
 usize g_client_count = 0;
@@ -43,22 +82,22 @@ ThreadArg net_connection_handler(ThreadArg args) {
             break;
         }
 
-        char* oc = strrchr((const char*)buffer, '\n');
-        if (oc)
-            *oc = 0;
-        printf("Client (%lu) [%s:%hu] sent: %s\n",
-               c->id,
-               c->socket->remote_ep.address.str,
-               c->socket->remote_ep.port,
-               buffer
-        );
-        if (oc)
-            *oc = '\n';
-        Socket_Send(c->socket, buffer, strlen((const char*)buffer) + 1, 0);
+        if (!strncmp((const char*)buffer, "killself", 8)) {
+            puts("Client is requesting disconnect.");
+            // Disconnect, note that disconnect doesn't dispose the socket object.
+            // It is still valid and can be reinitialized using Socket_From().
+            Socket_Disconnect(c->socket);
+        }
     }
 
+    // The thread can safely terminate self if not other threads depend on it or are signlaed that
+    // this thread is suspended, the user should handle that.
     free(buffer);
-    c->signal_termination = true;
+    Socket_Dispose(c->socket);
+    Thread_Dispose(c->owning_thread);
+    c->id = 0;
+    c->owning_thread = NULL;
+    c->available = false;
     return NULL;
 }
 
@@ -119,6 +158,7 @@ i32 main() {
     free(g_threads);
     Mutex_Dispose(g_threads_mutex);
     Socket_Dispose(server);
+
 
     CSSocket_Dispose();
     return 0;

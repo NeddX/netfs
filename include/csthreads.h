@@ -165,12 +165,16 @@ unsigned long
 #elif defined(CT_PLATFORM_UNIX)
 void*
 #endif
+#ifdef CS_ARCH_32
 stdcall
+#endif
 _ct_thread_routine_bootstrap
 (void* restrict args) {
 	struct _ct_thread_routine_info* info = (struct _ct_thread_routine_info*)args;
-	info->owner->result_ptr = info->routine(info->args_ptr);
-	free(info);
+	ThreadArg result = info->routine(info->args_ptr);
+    if (info->owner)
+        info->owner->result_ptr = result;
+    free(info);
 #ifdef CT_PLATFORM_NT
 	return 0;
 #elif defined(CT_PLATFORM_UNIX)
