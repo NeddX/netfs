@@ -164,6 +164,9 @@ typedef struct _cs_socket {
     socket_t _native_socket;
 } Socket;
 
+// So I don't forget to initialize.
+static uint8_t _cs_g_initialized = false;
+
 // WinSocks requires the user to initialize.
 int32_t CSSocket_Init() {
 #ifdef CS_PLATFORM_NT
@@ -172,14 +175,16 @@ int32_t CSSocket_Init() {
     if (res != 0) {
         fputs("CS_Sockets: Failed to initialize WinSocks v2.2.\n", stderr);
         return -1;
-    }
-#else
-    return CS_SOCKET_SUCCESS;
+    } else 
+        _cs_g_initialized = true;
 #endif
+    _cs_g_initialized = true;
+    return CS_SOCKET_SUCCESS;
 }
 
 // WinSocks also requires deinitialization.
 int32_t CSSocket_Dispose() {
+    _cs_g_initialized = false;
 #ifdef CS_PLATFORM_NT
     return WSACleanup();
 #else
@@ -200,18 +205,22 @@ IPEndPoint IPEndPoint_New(const IPAddress address, const AddressFamily family, c
 
 // Constructor for Socket.
 Socket* Socket_New(const AddressFamily family, const SocketType stype, const ProtocolType ptype) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return NULL;
+    }
+
     Socket* s = (Socket*)malloc(sizeof(Socket));
     s->family = family;
     s->stype = stype;
     s->ptype = ptype;
     s->connected = false;
     s->timeout = 5000;
-
+    
     s->_native_socket = CS_INVALID_SOCKET;
     s->_native_socket = socket(s->family, s->stype, s->ptype);
     if (s->_native_socket == CS_INVALID_SOCKET) {
         fputs("CS_Sockets: Failed to create socket.\n", stderr);
-        perror("native error");
         CS_CLOSE_SOCKET(s->_native_socket);
         free(s);
         return NULL;
@@ -221,6 +230,11 @@ Socket* Socket_New(const AddressFamily family, const SocketType stype, const Pro
 
 // Reinitialize a Socket object for use.
 int32_t Socket_From(Socket* restrict s, const AddressFamily family, const SocketType stype, const ProtocolType ptype) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return NULL;
+    }
+
     memset(s, 0, sizeof(Socket));
 
     s->family = family;
@@ -240,6 +254,11 @@ int32_t Socket_From(Socket* restrict s, const AddressFamily family, const Socket
 
 // Destructor for Socket.
 void Socket_Dispose(Socket* restrict s) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return;
+    }
+
     CS_CLOSE_SOCKET(s->_native_socket);
     memset(s, 0, sizeof(Socket));
     free(s);
@@ -247,6 +266,11 @@ void Socket_Dispose(Socket* restrict s) {
 
 // Disconnect the socket but keep the object.
 int32_t Socket_Close(Socket* restrict s) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+
     if (CS_CLOSE_SOCKET(s->_native_socket) == CS_SOCKET_ERROR)
         return CS_SOCKET_ERROR;
     s->connected = false;
@@ -255,6 +279,11 @@ int32_t Socket_Close(Socket* restrict s) {
 
 // Try and bind our socket to the provided endpoint.
 int32_t Socket_Bind(Socket* restrict s, IPEndPoint ep) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+
     s->local_ep = ep;
 
     void* server_addr = NULL;
@@ -296,6 +325,11 @@ int32_t Socket_Bind(Socket* restrict s, IPEndPoint ep) {
 
 // Try and listen on the bound endpoint.
 int32_t Socket_Listen(Socket* restrict s, const size_t max_clients) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+
     if (listen(s->_native_socket, max_clients) == CS_SOCKET_ERROR) {
         fputs("CS_Socket: Listening failed.\n", stderr);
         CS_CLOSE_SOCKET(s->_native_socket);
@@ -307,6 +341,11 @@ int32_t Socket_Listen(Socket* restrict s, const size_t max_clients) {
 // Try to connection to an endpoint.
 // TODO: Implement timeout system.
 int32_t Socket_Connect(Socket* restrict s, IPEndPoint ep) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+
     s->remote_ep = ep;
     int32_t res = connect(
             s->_native_socket,
@@ -323,6 +362,11 @@ int32_t Socket_Connect(Socket* restrict s, IPEndPoint ep) {
 
 // Accept a incoming connection and construct a new Socket object representing the newly connected client.
 Socket* Socket_Accept(Socket* restrict s) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return NULL;
+    }
+
     Socket* client = (Socket*)malloc(sizeof(Socket));
     memcpy(client, s, sizeof(Socket));
 
@@ -349,6 +393,11 @@ Socket* Socket_Accept(Socket* restrict s) {
 // Try and receive data from the Socket, shut the socket down if receive fails indicating that the client has disconnected.
 // If successful, return the amount of bytes received.
 int32_t Socket_Receieve(Socket* restrict s, uint8_t* restrict buffer, const size_t buffer_size, const int32_t flags) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+
     int32_t received_bytes = recv(s->_native_socket, buffer, buffer_size, flags);
     if (received_bytes == 0 || received_bytes == CS_SOCKET_ERROR) {
         s->connected = false;
@@ -361,6 +410,11 @@ int32_t Socket_Receieve(Socket* restrict s, uint8_t* restrict buffer, const size
 // Try and send data from the Socket, shut the socket down if receive fails indicating that the client has disconnected.
 // If successful, return the amount of bytes sent.
 int32_t Socket_Send(Socket* restrict s, const uint8_t* restrict buffer, const size_t buffer_size, const int32_t flags) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+    
     int32_t sent_bytes = send(s->_native_socket, buffer, buffer_size, flags);
     if (sent_bytes == CS_SOCKET_ERROR) {
         s->connected = false;

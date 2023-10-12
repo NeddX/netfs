@@ -22,7 +22,7 @@ usize g_client_count = 0;
 usize g_active_clients = 0;
 Thread** g_threads;
 Mutex* g_threads_mutex = NULL;
-char g_root_dir[PATH_MAX];
+char g_root_dir[CIO_PATH_MAX];
 
 Connection* get_next_available_slot() {
     Mutex_Lock(g_threads_mutex);
@@ -52,7 +52,7 @@ void parse_command(char* restrict str, const char*** args, usize* args_size, usi
 
 ThreadArg net_connection_handler(ThreadArg args) {
     Connection* c = (Connection*)args;
-    char cwd[PATH_MAX];
+    char cwd[CIO_PATH_MAX];
     strcpy(cwd, g_root_dir);
 
     u8* buffer = (u8*)malloc(BUFFER_SIZE);
@@ -70,7 +70,7 @@ ThreadArg net_connection_handler(ThreadArg args) {
         received_bytes = Socket_Receieve(c->socket, (u8*)&packet->header, sizeof(packet->header), 0);
         if (received_bytes == CS_SOCKET_ERROR) {
 lc0:
-            printf("Client (%lu) [%s:%hu] disconnected.\n", c->id, c->socket->remote_ep.address.str, c->socket->remote_ep.port);
+            printf("Client (%zu) [%s:%hu] disconnected.\n", c->id, c->socket->remote_ep.address.str, c->socket->remote_ep.port);
             break;
         }
 
@@ -113,7 +113,7 @@ lc0:
             buffer_size -= res;
 
             for (size_t i = 0; i < dir->entries_count; ++i) {
-                res += snprintf((char*)(buffer + res), buffer_size, "[%zu]\t(%c)\t%zu\t%s\n", i, (dir->entries[i].type == EntryType_File) ? 'f' : 'd', dir->entries[i].size, dir->entries[i].path);
+                res += snprintf((char*)(buffer + res), buffer_size, "[%zu]\t(%c)\t%zu\t%s\n", i, (dir->entries[i].type == EntryType_File) ? 'f' : 'd', dir->entries[i].size, dir->entries[i].name);
                 buffer_size -= res;
             }
             Socket_Send(c->socket, buffer, BUFFER_SIZE, 0);
@@ -150,7 +150,7 @@ i32 main(const i32 argc, const char* argv[]) {
 
     CSSocket_Init();
 
-    if (!getcwd(g_root_dir, sizeof(g_root_dir))) {
+    if (File_GetCurrentDirectory(g_root_dir, sizeof(g_root_dir)) == CIO_FILE_ERROR) {
         fputs("Failed to retrieve current working directory.", stderr);
         perror("nfserver");
         exit(EXIT_FAILURE);
@@ -222,7 +222,7 @@ i32 main(const i32 argc, const char* argv[]) {
 
                 conn->owning_thread = Thread_New(&attr);
 
-                printf("Client (%lu) [%s:%hu] connected.\n", conn->id, new_client->remote_ep.address.str, new_client->remote_ep.port);
+                printf("Client (%zu) [%s:%hu] connected.\n", conn->id, new_client->remote_ep.address.str, new_client->remote_ep.port);
             } else {
                 printf("Client [%s:%hu] tried to connect but max connection capacity (%d) exceeded.\n", new_client->remote_ep.address.str, new_client->remote_ep.port, MAX_CLIENTS);
 

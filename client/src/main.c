@@ -1,6 +1,7 @@
 #include <stdnfs.h>
 #include <cs_sockets.h>
 #include <cs_threads.h>
+#include <cs_systemio.h>
 #include <net_packet.h>
 
 #define BUFFER_SIZE 64
@@ -26,6 +27,12 @@ ThreadArg net_server_handler(ThreadArg args) {
 
         sent_bytes = Socket_Send(s, (u8*)&packet->header, sizeof(packet->header), 0);
 
+        DirectoryInfo* dir = Directory_Open(".");
+        for (usize i = 0; i < dir->entries_count; ++i) {
+            printf("[%zu]\t(%c)\t%zu\t%s\n", i, (dir->entries[i].type == EntryType_File) ? 'f' : 'd', dir->entries[i].size, dir->entries[i].name);
+        }
+        Directory_Close(dir);
+
         if (sent_bytes == CS_SOCKET_ERROR) {
 lc0:
             fputs("Disconnected from server.\n", stderr);
@@ -46,6 +53,7 @@ i32 main(const i32 argc, const char* argv[]) {
     u16 port = 0;
     const char* ipv4 = NULL;
 
+    /*
     if (argc > 1) {
         ipv4 = argv[1];
         port = atoi(argv[2]);
@@ -53,6 +61,12 @@ i32 main(const i32 argc, const char* argv[]) {
         puts("Usage: nfc [ IPv4 ] [ port ]");
         return 0;
     }
+    */
+
+    ipv4 = "127.0.0.1";
+    port = 7777;
+
+    CSSocket_Init();
 
     Socket* server = Socket_New(AddressFamily_InterNetwork, SocketType_Stream, ProtocolType_Tcp);
     IPEndPoint ep = IPEndPoint_New(IPAddress_Parse(ipv4), AddressFamily_InterNetwork, port);
