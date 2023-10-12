@@ -5,18 +5,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-
-// Kernel user-space API
-//#include <unistd.h>
-
-// Concurrency
-//#include <pthread.h>
-
-// I/O
-//#include <dirent.h>
-
-// Handy header only cross-platform (Linux & Windows) net wrapper around BSD sockets
-#include <cssockets.h>
+#include <limits.h>
+#include <signal.h>
 
 #define true 1
 #define false 0

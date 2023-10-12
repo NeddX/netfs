@@ -1,9 +1,12 @@
-#include <cssockets.h>
-#include <csthreads.h>
+#include <cs_sockets.h>
+#include <cs_threads.h>
+#include <cs_systemio.h>
 #include <stdnfs.h>
+#include <net_packet.h>
 
 #define MAX_CLIENTS 256
-#define BUFFER_SIZE 1024 * 1024
+#define BUFFER_SIZE 64
+#define DEF_ARG_COUNT 256
 
 typedef struct _netfs_connection {
     Socket* socket;
@@ -12,51 +15,14 @@ typedef struct _netfs_connection {
     Thread* owning_thread;
 } Connection;
 
-typedef enum _netfs_packet_header_type {
-    PacketType_Message,
-    PacketType_StringCommand
-} PacketHeaderType;
 
-typedef struct _netfs_packet_header {
-    PacketHeaderType id;
-    usize size;
-} PacketHeader;
-
-
-typedef struct _netfs_packet {
-    PacketHeader header;
-    u8* buffer;
-} Packet;
-
-Packet* Packet_New(const PacketHeaderType type, const u8* restrict buffer, const usize size) {
-    Packet* packet = (Packet*)malloc(sizeof(Packet));
-    packet->buffer = (u8*)malloc(size);
-    memcpy(packet->buffer, buffer, size);
-
-    packet->header.id = type;
-    packet->header.size = size;
-    return packet;
-}
-
-
-void Packet_AddBuffer(Packet* restrict p, const u8* buffer, const usize size) {
-    if (size > 0) {
-        p->buffer = (u8*)realloc(p->buffer, p->header.size + size);
-        memcpy(p->buffer + p->header.size, buffer, size);
-        p->header.size += size;
-    }
-}
-
-void Packet_Dispose(Packet* restrict p) {
-    free(p->buffer);
-    free(p);
-}
-
+Socket* g_server = NULL;
 Connection* g_clients = NULL;
 usize g_client_count = 0;
 usize g_active_clients = 0;
 Thread** g_threads;
 Mutex* g_threads_mutex = NULL;
+char g_root_dir[PATH_MAX];
 
 Connection* get_next_available_slot() {
     Mutex_Lock(g_threads_mutex);
@@ -70,51 +36,156 @@ Connection* get_next_available_slot() {
     return NULL;
 }
 
+void parse_command(char* restrict str, const char*** args, usize* args_size, usize* arg_count) {
+    // Parse the command by splitting it into tokens seperated by space, tab and new line characters.
+    i32 i = 0;
+    **args = strtok(str, " \t\n");
+    while (*(*args + i)) {
+        if (i >= *args_size / sizeof(char*) - 1) {
+            *args_size *= 2;
+            *args = (const char**)realloc(*args, *args_size);
+        }
+        *(*args + ++i) = strtok(NULL, " \t\n");
+    }
+    *arg_count = i;
+}
+
 ThreadArg net_connection_handler(ThreadArg args) {
     Connection* c = (Connection*)args;
+    char cwd[PATH_MAX];
+    strcpy(cwd, g_root_dir);
 
     u8* buffer = (u8*)malloc(BUFFER_SIZE);
     i32 received_bytes = 0;
+
+    usize arg_count = DEF_ARG_COUNT;
+    usize args_size = arg_count * sizeof(char*);
+    const char** cmd_args = (const char**)malloc(args_size);
+    char* cmd = NULL;
+
+    NetPacket* packet = NetPacket_New(NetPacketType_Message, NULL, 0);
+    usize received_packet_size = 0;
+
     while (c->socket->connected) {
-        memset(buffer, 0, BUFFER_SIZE);
-        if (Socket_Receieve(c->socket, buffer, BUFFER_SIZE, 0) == CS_SOCKET_ERROR) {
+        received_bytes = Socket_Receieve(c->socket, (u8*)&packet->header, sizeof(packet->header), 0);
+        if (received_bytes == CS_SOCKET_ERROR) {
+lc0:
             printf("Client (%lu) [%s:%hu] disconnected.\n", c->id, c->socket->remote_ep.address.str, c->socket->remote_ep.port);
             break;
         }
 
-        if (!strncmp((const char*)buffer, "killself", 8)) {
-            puts("Client is requesting disconnect.");
-            // Disconnect, note that disconnect doesn't dispose the socket object.
-            // It is still valid and can be reinitialized using Socket_From().
-            Socket_Disconnect(c->socket);
+        packet->buffer = (u8*)malloc(packet->header.size);
+        received_bytes = Socket_Receieve(c->socket, packet->buffer, packet->header.size, 0);
+        if (received_bytes == CS_SOCKET_ERROR)
+            goto lc0;
+
+        switch (packet->header.id) {
+            case NetPacketType_Message:
+                printf("Received message from [%s:%hu]: %s\n",
+                       c->socket->remote_ep.address.str,
+                       c->socket->remote_ep.port,
+                       (const char*)packet->buffer);
+                break;
+            default:
+                break;
         }
+        free(packet->buffer);
+        continue;
+
+        cmd = (char*)malloc(strlen((char*)buffer) + 1);
+        strcpy(cmd, (char*)buffer);
+        parse_command(cmd, &cmd_args, &args_size, &arg_count);
+
+        if (arg_count <= 0)
+            continue;
+
+        if (!strcmp(cmd_args[0], "killself")) {
+            puts("Client is requesting disconnect.");
+            // Disconnect from the client, note that disconnecting doesn't dispose the socket object,
+            // It is still valid and can be reinitialized using Socket_From().
+            Socket_Close(c->socket);
+            break;
+        } else if (!strcmp(cmd_args[0], "ls")) {
+            DirectoryInfo* dir = Directory_Open(cwd);
+            usize buffer_size = BUFFER_SIZE;
+
+            i32 res = snprintf((char*)buffer, buffer_size, "%s total size: %zu\n", cwd, dir->size);
+            buffer_size -= res;
+
+            for (size_t i = 0; i < dir->entries_count; ++i) {
+                res += snprintf((char*)(buffer + res), buffer_size, "[%zu]\t(%c)\t%zu\t%s\n", i, (dir->entries[i].type == EntryType_File) ? 'f' : 'd', dir->entries[i].size, dir->entries[i].path);
+                buffer_size -= res;
+            }
+            Socket_Send(c->socket, buffer, BUFFER_SIZE, 0);
+            Directory_Close(dir);
+        }
+        free(cmd);
+        cmd = NULL;
     }
 
-    // The thread can safely terminate self if not other threads depend on it or are signlaed that
-    // this thread is suspended, the user should handle that.
+    NetPacket_Dispose(packet);
+    free(cmd);
+    free(cmd_args);
     free(buffer);
     Socket_Dispose(c->socket);
-    Thread_Dispose(c->owning_thread);
     c->id = 0;
     c->owning_thread = NULL;
     c->available = false;
+    --g_active_clients;
     return NULL;
 }
 
-i32 main() {
+void clean_man() {
+    if (g_server)
+        Socket_Dispose(g_server);
+}
+
+void sigint_handler(i32 signo) {
+    exit(1);
+}
+
+i32 main(const i32 argc, const char* argv[]) {
+    atexit(clean_man);
+    signal(SIGINT, sigint_handler);
+
     CSSocket_Init();
 
-    srand(time(0));
-
-    u16 port = rand() % 9999;
-    Socket* server = Socket_New(AddressFamily_InterNetwork, SocketType_Stream, ProtocolType_Tcp);
-
-    IPEndPoint ep = { IPAddress_New(IPAddressType_Any), AddressFamily_InterNetwork, port };
-    if (Socket_Bind(server, ep) == CS_SOCKET_ERROR) {
+    if (!getcwd(g_root_dir, sizeof(g_root_dir))) {
+        fputs("Failed to retrieve current working directory.", stderr);
+        perror("nfserver");
         exit(EXIT_FAILURE);
     }
 
-    if (Socket_Listen(server, MAX_CLIENTS) == CS_SOCKET_ERROR) {
+    u16 port = 0;
+    if (argc > 1) {
+        for (usize i = 1; i < argc; ++i) {
+            if (!strcmp(argv[i], "-r")) {
+                strcpy(g_root_dir, argv[++i]);
+                if (chdir(g_root_dir) == -1) {
+                    fputs("Bad root directory.", stderr);
+                    perror("nfserver");
+                    exit(EXIT_FAILURE);
+                }
+            } else if (!strcmp(argv[i], "-p")) {
+                port = atoi(argv[++i]);
+            }
+        }
+    } else {
+        puts("Usage: nfs -r [ root_dir ] -p [ port ]");
+        return 0;
+    }
+    if (port == 0) {
+        puts("Usage: nfs -r [ root_dir ] -p [ port ]");
+        return 0;
+    }
+
+    g_server = Socket_New(AddressFamily_InterNetwork, SocketType_Stream, ProtocolType_Tcp);
+    IPEndPoint ep = IPEndPoint_New(IPAddress_New(IPAddressType_Any), AddressFamily_InterNetwork, port);
+    if (Socket_Bind(g_server, ep) == CS_SOCKET_ERROR) {
+        exit(EXIT_FAILURE);
+    }
+
+    if (Socket_Listen(g_server, MAX_CLIENTS) == CS_SOCKET_ERROR) {
         exit(EXIT_FAILURE);
     }
     printf("Listening on 127.0.0.1:%hu\n", ep.port);
@@ -127,7 +198,7 @@ i32 main() {
 
     bool running = true;
     while (running) {
-        Socket* new_client = Socket_Accept(server);
+        Socket* new_client = Socket_Accept(g_server);
         if (new_client) {
             Connection* conn = get_next_available_slot();
             if (conn) {
@@ -139,8 +210,16 @@ i32 main() {
                 attr.args = (ThreadArg)conn;
                 attr.initial_stack_size = 0;
                 attr.routine = net_connection_handler;
-                // TODO: Memory leak, threads do not get properly freed.
-                // write a thread manager.
+
+                // NOTE: We want our threads here to be detached, meaning they themselves will
+                // handle their disposal (lol) and resource deallocation after finishing execution.
+                // This is usually dangerous but we do not care because we are C programmers therefore ballsy,
+                // no but for real, the main thread does not depend on any of the child threads
+                // and we do not access them after creation (return value), or join them so this is safe.
+                // I do believe this is better than writing some form of a thread manager that manages
+                // client threads which itself is managed by the main thread.
+                attr.detached = true;
+
                 conn->owning_thread = Thread_New(&attr);
 
                 printf("Client (%lu) [%s:%hu] connected.\n", conn->id, new_client->remote_ep.address.str, new_client->remote_ep.port);
@@ -157,9 +236,7 @@ i32 main() {
     free(g_clients);
     free(g_threads);
     Mutex_Dispose(g_threads_mutex);
-    Socket_Dispose(server);
-
-
+    Socket_Dispose(g_server);
     CSSocket_Dispose();
     return 0;
 }

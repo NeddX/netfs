@@ -115,7 +115,6 @@ IPAddress IPAddress_Parse(const char* restrict addrv4_str) {
     const int32_t res = inet_pton(AF_INET, addrv4_str, &(addr.ipv4_addr.sin_addr));
     if (res != 1) {
         fprintf(stderr, "CS_Socket: Failed to parse %s as a valid IPv4 address.\n", addrv4_str);
-        perror("native error");
         exit(EXIT_FAILURE);
     }
     strcpy(addr.str, addrv4_str);
@@ -130,7 +129,6 @@ IPAddress IPAddress_ParseV6(const char* restrict addrv6_str) {
     const int32_t res = inet_pton(AF_INET6, addrv6_str, &(addr.ipv6_addr.sin6_addr));
     if (res != 1) {
         fprintf(stderr, "CS_Socket: Failed to parse %s as a valid IPv6 address.\n", addrv6_str);
-        perror("native error");
         exit(EXIT_FAILURE);
     }
     strcpy(addr.str, addrv6_str);
@@ -189,6 +187,17 @@ int32_t CSSocket_Dispose() {
 #endif
 }
 
+// Constructor for IPEndPoint.
+IPEndPoint IPEndPoint_New(const IPAddress address, const AddressFamily family, const uint16_t port) {
+    IPEndPoint ep;
+    ep.address = address;
+    ep.addressFamily = family;
+    ep.port = port;
+    ep.address.ipv4_addr.sin_port = htons(port);
+    ep.address.ipv4_addr.sin_family = family;
+    return ep;
+}
+
 // Constructor for Socket.
 Socket* Socket_New(const AddressFamily family, const SocketType stype, const ProtocolType ptype) {
     Socket* s = (Socket*)malloc(sizeof(Socket));
@@ -210,6 +219,7 @@ Socket* Socket_New(const AddressFamily family, const SocketType stype, const Pro
     return s;
 }
 
+// Reinitialize a Socket object for use.
 int32_t Socket_From(Socket* restrict s, const AddressFamily family, const SocketType stype, const ProtocolType ptype) {
     memset(s, 0, sizeof(Socket));
 
@@ -228,7 +238,7 @@ int32_t Socket_From(Socket* restrict s, const AddressFamily family, const Socket
     return CS_SOCKET_SUCCESS;
 }
 
-// Destructor for our socket.
+// Destructor for Socket.
 void Socket_Dispose(Socket* restrict s) {
     CS_CLOSE_SOCKET(s->_native_socket);
     memset(s, 0, sizeof(Socket));
@@ -236,9 +246,10 @@ void Socket_Dispose(Socket* restrict s) {
 }
 
 // Disconnect the socket but keep the object.
-int32_t Socket_Disconnect(Socket* restrict s) {
+int32_t Socket_Close(Socket* restrict s) {
     if (CS_CLOSE_SOCKET(s->_native_socket) == CS_SOCKET_ERROR)
         return CS_SOCKET_ERROR;
+    s->connected = false;
     return CS_SOCKET_SUCCESS;
 }
 
@@ -252,23 +263,23 @@ int32_t Socket_Bind(Socket* restrict s, IPEndPoint ep) {
     // Resolve the endpoint.
     switch (ep.address.type) {
         case IPAddressType_IPv4LPStr:
-            ep.address.ipv4_addr.sin_port = htons(ep.port);
-            ep.address.ipv4_addr.sin_family = ep.addressFamily;
-            server_addr = (void*)&ep.address.ipv4_addr;
-            addr_size = sizeof(ep.address.ipv4_addr);
+            s->local_ep.address.ipv4_addr.sin_port = htons(s->local_ep.port);
+            s->local_ep.address.ipv4_addr.sin_family = s->local_ep.addressFamily;
+            server_addr = (void*)&s->local_ep.address.ipv4_addr;
+            addr_size = sizeof(s->local_ep.address.ipv4_addr);
             break;
         case IPAddressType_IPv6LPStr:
-            ep.address.ipv6_addr.sin6_port = htons(ep.port);
-            ep.address.ipv6_addr.sin6_family = ep.addressFamily;
-            server_addr = (void*)&ep.address.ipv6_addr;
-            addr_size = sizeof(ep.address.ipv6_addr);
+            s->local_ep.address.ipv6_addr.sin6_port = htons(s->local_ep.port);
+            s->local_ep.address.ipv6_addr.sin6_family = s->local_ep.addressFamily;
+            server_addr = (void*)&s->local_ep.address.ipv6_addr;
+            addr_size = sizeof(s->local_ep.address.ipv6_addr);
             break;
         default:
-            ep.address.ipv4_addr.sin_addr.s_addr = ep.address.type;
-            ep.address.ipv4_addr.sin_port = htons(ep.port);
-            ep.address.ipv4_addr.sin_family = ep.addressFamily;
-            server_addr = (void*)&ep.address.ipv4_addr;
-            addr_size = sizeof(ep.address.ipv4_addr);
+            s->local_ep.address.ipv4_addr.sin_addr.s_addr = s->local_ep.address.type;
+            s->local_ep.address.ipv4_addr.sin_port = htons(s->local_ep.port);
+            s->local_ep.address.ipv4_addr.sin_family = s->local_ep.addressFamily;
+            server_addr = (void*)&s->local_ep.address.ipv4_addr;
+            addr_size = sizeof(s->local_ep.address.ipv4_addr);
             break;
     }
 
@@ -295,15 +306,18 @@ int32_t Socket_Listen(Socket* restrict s, const size_t max_clients) {
 
 // Try to connection to an endpoint.
 // TODO: Implement timeout system.
-int32_t Socket_Connect(Socket* restrict s) {
-    if (connect(
+int32_t Socket_Connect(Socket* restrict s, IPEndPoint ep) {
+    s->remote_ep = ep;
+    int32_t res = connect(
             s->_native_socket,
             (struct sockaddr*)&s->remote_ep.address.ipv4_addr,
-            sizeof(s->remote_ep.address.ipv4_addr)) == CS_SOCKET_ERROR) {
+            sizeof(s->remote_ep.address.ipv4_addr));
+    if (res == CS_SOCKET_ERROR) {
         fputs("CS_Sockets: Connection with the remote failed.\n", stderr);
         perror("native error");
         return CS_SOCKET_ERROR;
     }
+    s->connected = true;
     return CS_SOCKET_SUCCESS;
 }
 
