@@ -32,11 +32,14 @@
 #include <windows.h>
 
 #elif defined(__linux__) || defined(__APPLE__)
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <limits.h>
+
 #define CIO_PLATFORM_UNIX
 #define CIO_PATH_MAX PATH_MAX
 
-#include <dirent.h>
-#include <sys/stat.h>
 
 // gcc and clang shenanigans.
 #if defined(__clang__) || defined(__GNUC__)
@@ -105,8 +108,8 @@ DirectoryInfo* Directory_Open(const char* path) {
         }
         strcpy(info->entries[i].name, entry->d_name);
 
-        if (lstat(info->entries[i].path, &st) == -1) {
-            fprintf(stderr, "CS_SystemIO: Failed to access %s\n", info->entries[i].path);
+        if (lstat(info->entries[i].name, &st) == -1) {
+            fprintf(stderr, "CS_SystemIO: Failed to access %s\n", info->entries[i].name);
             perror("native error");
             --i;
             continue;
@@ -122,7 +125,6 @@ DirectoryInfo* Directory_Open(const char* path) {
     info->entries_count = i;
     info->entries = (EntryInfo*)realloc(info->entries, info->entries_count * sizeof(EntryInfo));
 #elif defined(CIO_PLATFORM_NT)
-#endif
     char t_path[CIO_PATH_MAX];
     strcpy(t_path, path);
     strcpy(t_path, "\\*.*");
@@ -180,7 +182,7 @@ DirectoryInfo* Directory_Open(const char* path) {
         info->size += info->entries[i].size;
         ++i;
     }
-
+#endif
     return info;
 }
 

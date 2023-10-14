@@ -2,7 +2,7 @@
 #include <cs_threads.h>
 #include <cs_systemio.h>
 #include <stdnfs.h>
-#include <net_packet.h>
+#include <net_common.h>
 
 #define MAX_CLIENTS 256
 #define BUFFER_SIZE 64
@@ -55,78 +55,65 @@ ThreadArg net_connection_handler(ThreadArg args) {
     char cwd[CIO_PATH_MAX];
     strcpy(cwd, g_root_dir);
 
-    u8* buffer = (u8*)malloc(BUFFER_SIZE);
     i32 received_bytes = 0;
-
-    usize arg_count = DEF_ARG_COUNT;
-    usize args_size = arg_count * sizeof(char*);
-    const char** cmd_args = (const char**)malloc(args_size);
-    char* cmd = NULL;
-
-    NetPacket* packet = NetPacket_New(NetPacketType_Message, NULL, 0);
-    usize received_packet_size = 0;
-
     while (c->socket->connected) {
-        received_bytes = Socket_Receieve(c->socket, (u8*)&packet->header, sizeof(packet->header), 0);
+        NetPacket* recv_packet = NetPacket_New(NetPacketType_None, NULL, 0);
+        received_bytes = Socket_Receieve(c->socket, (u8*)&recv_packet->header, sizeof(recv_packet->header), 0);
         if (received_bytes == CS_SOCKET_ERROR) {
 lc0:
             printf("Client (%zu) [%s:%hu] disconnected.\n", c->id, c->socket->remote_ep.address.str, c->socket->remote_ep.port);
             break;
         }
 
-        packet->buffer = (u8*)malloc(packet->header.size);
-        received_bytes = Socket_Receieve(c->socket, packet->buffer, packet->header.size, 0);
+        recv_packet->buffer = (u8*)malloc(recv_packet->header.size);
+        received_bytes = Socket_Receieve(c->socket, recv_packet->buffer, recv_packet->header.size, 0);
         if (received_bytes == CS_SOCKET_ERROR)
             goto lc0;
 
-        switch (packet->header.id) {
+        switch (recv_packet->header.id) {
             case NetPacketType_Message:
                 printf("Received message from [%s:%hu]: %s\n",
                        c->socket->remote_ep.address.str,
                        c->socket->remote_ep.port,
-                       (const char*)packet->buffer);
+                       (const char*)recv_packet->buffer);
                 break;
+            case NetPacketType_FileDownloadRequest: {
+                NetPacket* send_packet = NetPacket_New(NetPacketType_FileInfo, NULL, 0);
+                const char* name = (const char*)recv_packet->buffer;
+
+                FILE* fs = fopen(name, "r");
+                if (fs) {
+                    fseek(fs, 0, SEEK_END);
+                    usize file_size = ftell(fs);
+                    fseek(fs, 0, SEEK_SET);
+
+                    NetPacket_AddData(send_packet, (u8*)&file_size, sizeof(file_size));
+                    NetPacket_Send(c->socket, &send_packet);
+                    NetPacket_Dispose(send_packet);
+
+                    const usize FILE_BUFFER_SIZE = 2048;
+                    usize bytes_sent = 0;
+                    u8* buffer = (u8*)malloc(FILE_BUFFER_SIZE);
+                    while (bytes_sent < file_size) {
+                        bytes_sent = fread(buffer, FILE_BUFFER_SIZE, 1, fs);
+                        send_packet = NetPacket_New(NetPacketType_FileDownloadData, buffer, bytes_sent);
+                        while (send_packet) NetPacket_Send(c->socket, &send_packet);
+                    }
+                    free(buffer);
+                } else {
+                    NetPacket_AddData(send_packet, (const u8*)"File not found", strlen("File not found") + 1);
+                    NetPacket_Send(c->socket, &send_packet);
+                    NetPacket_Dispose(send_packet);
+                }
+                break;
+            }
             default:
                 break;
         }
-        free(packet->buffer);
-        continue;
-
-        cmd = (char*)malloc(strlen((char*)buffer) + 1);
-        strcpy(cmd, (char*)buffer);
-        parse_command(cmd, &cmd_args, &args_size, &arg_count);
-
-        if (arg_count <= 0)
-            continue;
-
-        if (!strcmp(cmd_args[0], "killself")) {
-            puts("Client is requesting disconnect.");
-            // Disconnect from the client, note that disconnecting doesn't dispose the socket object,
-            // It is still valid and can be reinitialized using Socket_From().
-            Socket_Close(c->socket);
-            break;
-        } else if (!strcmp(cmd_args[0], "ls")) {
-            DirectoryInfo* dir = Directory_Open(cwd);
-            usize buffer_size = BUFFER_SIZE;
-
-            i32 res = snprintf((char*)buffer, buffer_size, "%s total size: %zu\n", cwd, dir->size);
-            buffer_size -= res;
-
-            for (size_t i = 0; i < dir->entries_count; ++i) {
-                res += snprintf((char*)(buffer + res), buffer_size, "[%zu]\t(%c)\t%zu\t%s\n", i, (dir->entries[i].type == EntryType_File) ? 'f' : 'd', dir->entries[i].size, dir->entries[i].name);
-                buffer_size -= res;
-            }
-            Socket_Send(c->socket, buffer, BUFFER_SIZE, 0);
-            Directory_Close(dir);
-        }
-        free(cmd);
-        cmd = NULL;
+        NetPacket_Dispose(recv_packet);
     }
 
     NetPacket_Dispose(packet);
-    free(cmd);
-    free(cmd_args);
-    free(buffer);
     Socket_Dispose(c->socket);
     c->id = 0;
     c->owning_thread = NULL;

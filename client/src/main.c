@@ -2,49 +2,76 @@
 #include <cs_sockets.h>
 #include <cs_threads.h>
 #include <cs_systemio.h>
-#include <net_packet.h>
+#include <net_common.h>
 
 #define BUFFER_SIZE 64
+#define DEF_ARG_COUNT 256
+
+void parse_command(char* restrict str, const char*** args, usize* args_size, usize* arg_count) {
+    // Parse the command by splitting it into tokens seperated by space, tab and new line characters.
+    i32 i = 0;
+    **args = strtok(str, " \t\n");
+    while (*(*args + i)) {
+        if (i >= *args_size / sizeof(char*) - 1) {
+            *args_size *= 2;
+            *args = (const char**)realloc(*args, *args_size);
+        }
+        *(*args + ++i) = strtok(NULL, " \t\n");
+    }
+    *arg_count = i;
+}
 
 ThreadArg net_server_handler(ThreadArg args) {
     Socket* s = (Socket*)args;
 
-    u8* buffer = (u8*)malloc(BUFFER_SIZE);
+    char* buffer = (char*)malloc(BUFFER_SIZE);
+    usize arg_count = DEF_ARG_COUNT;
+    usize args_size = arg_count * sizeof(char*);
+    const char** cmd_args = (const char**)malloc(args_size);
 
-    NetPacket* packet = NetPacket_New(NetPacketType_Message, NULL, 0);
     usize sent_bytes = 0;
     while (s->connected) {
+        NetPacket* packet = NetPacket_New(NetPacketType_Message, NULL, 0);
+
         printf("> ");
-        fgets((char*)buffer, BUFFER_SIZE, stdin);
-        char* n = strrchr((char*)buffer, '\n');
+        fgets(buffer, BUFFER_SIZE, stdin);
+        char* n = strrchr(buffer, '\n');
         *n = 0;
 
-        usize len = strlen((const char*)buffer) + 1;
-        packet->buffer = (u8*)malloc(len);
-        packet->header.id = NetPacketType_Message;
-        packet->header.size = len;
-        memcpy(packet->buffer, buffer, len);
+        parse_command(buffer, &cmd_args, &args_size, &arg_count);
 
-        sent_bytes = Socket_Send(s, (u8*)&packet->header, sizeof(packet->header), 0);
+        if (!strcmp(cmd_args[0], "ls")) {
+            packet->header.id = NetPacketType_ListEntries;
+            NetPacket_Send(s, &packet);
+        } else if (!strcmp(cmd_args[0], "fget")) {
+            packet->header.id = NetPacketType_FileDownloadRequest;
+            NetPacket_AddData(packet, (u8*)cmd_args[1], strlen(cmd_args[1]) + 1);
+            NetPacket_Send(s, &packet);
+        } else if (!strcmp(cmd_args[0], "fup")) {
+            packet->header.id = NetPacketType_FileUploadRequest;
+            NetPacket_AddData(packet, (u8*)cmd_args[1], strlen(cmd_args[1]) + 1);
 
-        DirectoryInfo* dir = Directory_Open(".");
-        for (usize i = 0; i < dir->entries_count; ++i) {
-            printf("[%zu]\t(%c)\t%zu\t%s\n", i, (dir->entries[i].type == EntryType_File) ? 'f' : 'd', dir->entries[i].size, dir->entries[i].name);
+            usize file_size;
+            FILE* fs = fopen(cmd_args[1], "r");
+            if (fs) {
+                fseek(fs, 0, SEEK_SET);
+                file_size = ftell(fs);
+                fclose(fs);
+            } else {
+                fprintf(stderr, "Failed to open file %s for reading.\n", cmd_args[1]);
+                NetPacket_Dispose(packet);
+                continue;
+            }
+
+            printf("File: %s Size: %zu\n", cmd_args[1], file_size);
+            NetPacket_AddData(packet, (u8*)file_size, sizeof(usize));
+            NetPacket_Send(s, &packet);
         }
-        Directory_Close(dir);
-
-        if (sent_bytes == CS_SOCKET_ERROR) {
-lc0:
-            fputs("Disconnected from server.\n", stderr);
-            break;
-        }
-
-        sent_bytes = Socket_Send(s, packet->buffer, packet->header.size, 0);
-        if (sent_bytes == CS_SOCKET_ERROR)
-            goto lc0;
+        
+        NetPacket_Dispose(packet);
     }
 
-    NetPacket_Dispose(packet);
+    free(cmd_args);
     free(buffer);
     return NULL;
 }
@@ -53,7 +80,6 @@ i32 main(const i32 argc, const char* argv[]) {
     u16 port = 0;
     const char* ipv4 = NULL;
 
-    /*
     if (argc > 1) {
         ipv4 = argv[1];
         port = atoi(argv[2]);
@@ -61,10 +87,6 @@ i32 main(const i32 argc, const char* argv[]) {
         puts("Usage: nfc [ IPv4 ] [ port ]");
         return 0;
     }
-    */
-
-    ipv4 = "127.0.0.1";
-    port = 7777;
 
     CSSocket_Init();
 
@@ -83,21 +105,35 @@ i32 main(const i32 argc, const char* argv[]) {
     attr.routine = net_server_handler;
     Thread* server_handler = Thread_New(&attr);
 
-    u8* buffer = (u8*)malloc(BUFFER_SIZE);
     while (server->connected) {
-        memset((char*)buffer, 0, BUFFER_SIZE);
+        NetPacket* recv_packet = NetPacket_New(NetPacketType_None, NULL, 0);
 
-        if (Socket_Receieve(server, buffer, BUFFER_SIZE, 0) == CS_SOCKET_ERROR) {
+        i32 res = Socket_Receieve(server, (u8*)&recv_packet->header, sizeof(recv_packet->header), 0);
+        if (res == CS_SOCKET_ERROR) {
+lc1:
             fputs("Disconnected from server.\n", stderr);
+            NetPacket_Dispose(recv_packet);
+            break;
         }
 
-        printf("\n%s", (const char*)buffer);
+        switch (recv_packet->header.id) {
+            case NetPacketType_Message:
+                NetPacket_AddData(recv_packet, NULL, recv_packet->header.size);
+                res = Socket_Receieve(server, recv_packet->buffer, recv_packet->header.size, 0);
+                if (res == CS_SOCKET_ERROR)
+                    goto lc1;
+                printf("Server: %s\n", (const char*)packet->buffer);
+                break;
+            default:
+                break;
+        }
+
+        NetPacket_Dispose(recv_packet);
     }
 
     // NOTE: Terminating a thread doesn't dispose the Thread object.
     Thread_Terminate(server_handler);
     Thread_Dispose(server_handler);
-    free(buffer);
     Socket_Dispose(server);
     return 0;
 }

@@ -232,7 +232,7 @@ Socket* Socket_New(const AddressFamily family, const SocketType stype, const Pro
 int32_t Socket_From(Socket* restrict s, const AddressFamily family, const SocketType stype, const ProtocolType ptype) {
     if (!_cs_g_initialized) {
         fputs("CS_Sockets not initialized.\n", stderr);
-        return NULL;
+        return CS_SOCKET_ERROR;
     }
 
     memset(s, 0, sizeof(Socket));
