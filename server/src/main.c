@@ -13,6 +13,7 @@ typedef struct _netfs_connection {
     bool available;
     usize id;
     Thread* owning_thread;
+    Mutex* mutex;
 } Connection;
 
 
@@ -55,20 +56,15 @@ ThreadArg net_connection_handler(ThreadArg args) {
     char cwd[CIO_PATH_MAX];
     strcpy(cwd, g_root_dir);
 
-    i32 received_bytes = 0;
-    while (c->socket->connected) {
-        NetPacket* recv_packet = NetPacket_New(NetPacketType_None, NULL, 0);
-        received_bytes = Socket_Receieve(c->socket, (u8*)&recv_packet->header, sizeof(recv_packet->header), 0);
-        if (received_bytes == CS_SOCKET_ERROR) {
-lc0:
+    while (c->socket->connected &&
+           Mutex_Lock(c->mutex) != MutexResult_Error &&
+           c->available &&
+           Mutex_Unlock(c->mutex) != MutexResult_Error) {
+        NetPacket* recv_packet = NetPacket_Receive(c->socket);
+        if (!recv_packet) {
             printf("Client (%zu) [%s:%hu] disconnected.\n", c->id, c->socket->remote_ep.address.str, c->socket->remote_ep.port);
             break;
         }
-
-        recv_packet->buffer = (u8*)malloc(recv_packet->header.size);
-        received_bytes = Socket_Receieve(c->socket, recv_packet->buffer, recv_packet->header.size, 0);
-        if (received_bytes == CS_SOCKET_ERROR)
-            goto lc0;
 
         switch (recv_packet->header.id) {
             case NetPacketType_Message:
@@ -77,18 +73,49 @@ lc0:
                        c->socket->remote_ep.port,
                        (const char*)recv_packet->buffer);
                 break;
+            case NetPacketType_ListEntries: {
+                NetPacket* send_packet = NetPacket_New(NetPacketType_Message, NULL, 0);
+                DirectoryInfo* dirinf = Directory_Open(cwd);
+                if (dirinf) {
+                    const usize DIR_BUFFER_SIZE = CIO_PATH_MAX + 1024;
+                    char* dir_buffer = (char*)malloc(sizeof(char) * DIR_BUFFER_SIZE);
+                    for (usize i = 0; i < dirinf->entries_count; ++i) {
+                        memset(dir_buffer, 0, DIR_BUFFER_SIZE);
+                        snprintf(
+                            dir_buffer,
+                            DIR_BUFFER_SIZE,
+                            "[%zu] (%c) %zu\t%s\n",
+                            i,
+                            (dirinf->entries[i].type == EntryType_File) ? 'f' : 'd',
+                            dirinf->entries[i].size,
+                            dirinf->entries[i].name);
+                        NetPacket_AddData(
+                            send_packet,
+                            (u8*)dir_buffer,
+                            (i == dirinf->entries_count - 1) ? strlen(dir_buffer) + 1 : strlen(dir_buffer));
+                    }
+                    free(dir_buffer);
+                    Directory_Close(dirinf);
+                } else {
+                    send_packet->header.id = NetPacketType_Error;
+                    NetPacket_AddData(send_packet, (const u8*)"File not found", strlen("File not found") + 1);
+                }
+                NetPacket_Send(c->socket, send_packet);
+                NetPacket_Dispose(send_packet);
+                break;
+            }
             case NetPacketType_FileDownloadRequest: {
                 NetPacket* send_packet = NetPacket_New(NetPacketType_FileInfo, NULL, 0);
                 const char* name = (const char*)recv_packet->buffer;
 
-                FILE* fs = fopen(name, "r");
+                FILE* fs = fopen(name, "rb");
                 if (fs) {
                     fseek(fs, 0, SEEK_END);
                     usize file_size = ftell(fs);
                     fseek(fs, 0, SEEK_SET);
 
                     NetPacket_AddData(send_packet, (u8*)&file_size, sizeof(file_size));
-                    NetPacket_Send(c->socket, &send_packet);
+                    NetPacket_Send(c->socket, send_packet);
                     NetPacket_Dispose(send_packet);
 
                     const usize FILE_BUFFER_SIZE = 2048;
@@ -97,12 +124,13 @@ lc0:
                     while (bytes_sent < file_size) {
                         bytes_sent = fread(buffer, FILE_BUFFER_SIZE, 1, fs);
                         send_packet = NetPacket_New(NetPacketType_FileDownloadData, buffer, bytes_sent);
-                        while (send_packet) NetPacket_Send(c->socket, &send_packet);
+                        while (send_packet) NetPacket_Send(c->socket, send_packet);
+                        NetPacket_Dispose(send_packet);
                     }
                     free(buffer);
                 } else {
                     NetPacket_AddData(send_packet, (const u8*)"File not found", strlen("File not found") + 1);
-                    NetPacket_Send(c->socket, &send_packet);
+                    NetPacket_Send(c->socket, send_packet);
                     NetPacket_Dispose(send_packet);
                 }
                 break;
@@ -113,7 +141,6 @@ lc0:
         NetPacket_Dispose(recv_packet);
     }
 
-    NetPacket_Dispose(packet);
     Socket_Dispose(c->socket);
     c->id = 0;
     c->owning_thread = NULL;
@@ -123,8 +150,11 @@ lc0:
 }
 
 void clean_man() {
-    if (g_server)
-        Socket_Dispose(g_server);
+    Socket_Dispose(g_server);
+    free(g_clients);
+    free(g_threads);
+    Mutex_Dispose(g_threads_mutex);
+    CSSocket_Dispose();
 }
 
 void sigint_handler(i32 signo) {
@@ -192,6 +222,7 @@ i32 main(const i32 argc, const char* argv[]) {
                 conn->socket = new_client;
                 conn->available = true;
                 conn->id = g_active_clients++;
+                conn->mutex = Mutex_New();
 
                 ThreadAttributes attr;
                 attr.args = (ThreadArg)conn;
@@ -220,10 +251,6 @@ i32 main(const i32 argc, const char* argv[]) {
         }
     }
 
-    free(g_clients);
-    free(g_threads);
-    Mutex_Dispose(g_threads_mutex);
-    Socket_Dispose(g_server);
-    CSSocket_Dispose();
+    clean_man();
     return 0;
 }

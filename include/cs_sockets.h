@@ -41,6 +41,9 @@ typedef uintptr_t socket_t;
 #define CS_INVALID_SOCKET INVALID_SOCKET
 #define CS_SOCKET_ERROR SOCKET_ERROR
 #define CS_SOCKET_SUCCESS 0
+#define CS_SD_BOTH SD_BOTH
+#define CS_SD_READ SD_RECEIVE
+#define CS_SD_WRITE SD_SEND
 
 #elif defined(__linux__) || defined(__APPLE__)
 #define CS_PLATFORM_UNIX
@@ -61,6 +64,9 @@ typedef intptr_t socket_t;
 #define CS_INVALID_SOCKET -1
 #define CS_SOCKET_ERROR -1
 #define CS_SOCKET_SUCCESS 0
+#define CS_SD_BOTH SHUT_RDWR
+#define CS_SD_READ SHUT_TRD
+#define CS_SD_WRITE SHUT_WR
 #endif
 
 // Address family enum abstraction layer.
@@ -161,7 +167,7 @@ typedef struct _cs_socket {
     uint8_t connected;
     uint16_t timeout;
 
-    socket_t _native_socket;
+    socket_t _native_handle;
 } Socket;
 
 // So I don't forget to initialize.
@@ -217,11 +223,11 @@ Socket* Socket_New(const AddressFamily family, const SocketType stype, const Pro
     s->connected = false;
     s->timeout = 5000;
     
-    s->_native_socket = CS_INVALID_SOCKET;
-    s->_native_socket = socket(s->family, s->stype, s->ptype);
-    if (s->_native_socket == CS_INVALID_SOCKET) {
+    s->_native_handle = CS_INVALID_SOCKET;
+    s->_native_handle = socket(s->family, s->stype, s->ptype);
+    if (s->_native_handle == CS_INVALID_SOCKET) {
         fputs("CS_Sockets: Failed to create socket.\n", stderr);
-        CS_CLOSE_SOCKET(s->_native_socket);
+        CS_CLOSE_SOCKET(s->_native_handle);
         free(s);
         return NULL;
     }
@@ -243,10 +249,10 @@ int32_t Socket_From(Socket* restrict s, const AddressFamily family, const Socket
     s->connected = false;
     s->timeout = 5000;
 
-    s->_native_socket = CS_INVALID_SOCKET;
-    s->_native_socket = socket(s->family, s->stype, s->ptype);
-    if (s->_native_socket == CS_INVALID_SOCKET) {
-        CS_CLOSE_SOCKET(s->_native_socket);
+    s->_native_handle = CS_INVALID_SOCKET;
+    s->_native_handle = socket(s->family, s->stype, s->ptype);
+    if (s->_native_handle == CS_INVALID_SOCKET) {
+        CS_CLOSE_SOCKET(s->_native_handle);
         return CS_SOCKET_ERROR;
     }
     return CS_SOCKET_SUCCESS;
@@ -259,19 +265,29 @@ void Socket_Dispose(Socket* restrict s) {
         return;
     }
 
-    CS_CLOSE_SOCKET(s->_native_socket);
+    shutdown(s->_native_handle, CS_SD_BOTH);
+    CS_CLOSE_SOCKET(s->_native_handle);
     memset(s, 0, sizeof(Socket));
     free(s);
 }
 
-// Disconnect the socket but keep the object.
+// Shutdown read and write operations on the socket.
+int32_t Socket_Shutdown(Socket* restrict s, const int32_t how) {
+    if (!_cs_g_initialized) {
+        fputs("CS_Sockets not initialized.\n", stderr);
+        return CS_SOCKET_ERROR;
+    }
+    return shutdown(s->_native_handle, how);
+}
+
+// Close the socket but keep the object.
 int32_t Socket_Close(Socket* restrict s) {
     if (!_cs_g_initialized) {
         fputs("CS_Sockets not initialized.\n", stderr);
         return CS_SOCKET_ERROR;
     }
 
-    if (CS_CLOSE_SOCKET(s->_native_socket) == CS_SOCKET_ERROR)
+    if (CS_CLOSE_SOCKET(s->_native_handle) == CS_SOCKET_ERROR)
         return CS_SOCKET_ERROR;
     s->connected = false;
     return CS_SOCKET_SUCCESS;
@@ -313,11 +329,11 @@ int32_t Socket_Bind(Socket* restrict s, IPEndPoint ep) {
     }
 
 	// Try and bind.
-    int32_t bind_res = bind(s->_native_socket, (struct sockaddr*)server_addr, addr_size);
+    int32_t bind_res = bind(s->_native_handle, (struct sockaddr*)server_addr, addr_size);
     if (bind_res == CS_SOCKET_ERROR) {
         fputs("CS_Sockets: Failed to bind socket.\n", stderr);
         perror("native error");
-        CS_CLOSE_SOCKET(s->_native_socket);
+        CS_CLOSE_SOCKET(s->_native_handle);
         return CS_SOCKET_ERROR;
     }
     return CS_SOCKET_SUCCESS;
@@ -330,9 +346,9 @@ int32_t Socket_Listen(Socket* restrict s, const size_t max_clients) {
         return CS_SOCKET_ERROR;
     }
 
-    if (listen(s->_native_socket, max_clients) == CS_SOCKET_ERROR) {
+    if (listen(s->_native_handle, max_clients) == CS_SOCKET_ERROR) {
         fputs("CS_Socket: Listening failed.\n", stderr);
-        CS_CLOSE_SOCKET(s->_native_socket);
+        CS_CLOSE_SOCKET(s->_native_handle);
         return CS_SOCKET_ERROR;
     }
     return CS_SOCKET_SUCCESS;
@@ -348,7 +364,7 @@ int32_t Socket_Connect(Socket* restrict s, IPEndPoint ep) {
 
     s->remote_ep = ep;
     int32_t res = connect(
-            s->_native_socket,
+            s->_native_handle,
             (struct sockaddr*)&s->remote_ep.address.ipv4_addr,
             sizeof(s->remote_ep.address.ipv4_addr));
     if (res == CS_SOCKET_ERROR) {
@@ -371,13 +387,13 @@ Socket* Socket_Accept(Socket* restrict s) {
     memcpy(client, s, sizeof(Socket));
 
     socklen_t addr_len = sizeof(client->remote_ep.address.ipv4_addr);
-    client->_native_socket = accept(
-        s->_native_socket,
+    client->_native_handle = accept(
+        s->_native_handle,
         (struct sockaddr*)&client->remote_ep.address.ipv4_addr,
         &addr_len
     );
 
-    if (client->_native_socket == CS_INVALID_SOCKET) {
+    if (client->_native_handle == CS_INVALID_SOCKET) {
         free(client);
         return NULL;
     }
@@ -392,16 +408,16 @@ Socket* Socket_Accept(Socket* restrict s) {
 
 // Try and receive data from the Socket, shut the socket down if receive fails indicating that the client has disconnected.
 // If successful, return the amount of bytes received.
-int32_t Socket_Receieve(Socket* restrict s, uint8_t* restrict buffer, const size_t buffer_size, const int32_t flags) {
+int32_t Socket_Receive(Socket* restrict s, uint8_t* restrict buffer, const size_t buffer_size, const int32_t flags) {
     if (!_cs_g_initialized) {
         fputs("CS_Sockets not initialized.\n", stderr);
         return CS_SOCKET_ERROR;
     }
 
-    int32_t received_bytes = recv(s->_native_socket, buffer, buffer_size, flags);
+    int32_t received_bytes = recv(s->_native_handle, buffer, buffer_size, flags);
     if (received_bytes == 0 || received_bytes == CS_SOCKET_ERROR) {
         s->connected = false;
-        CS_CLOSE_SOCKET(s->_native_socket);
+        CS_CLOSE_SOCKET(s->_native_handle);
         return CS_SOCKET_ERROR;
     }
     return received_bytes;
@@ -415,10 +431,10 @@ int32_t Socket_Send(Socket* restrict s, const uint8_t* restrict buffer, const si
         return CS_SOCKET_ERROR;
     }
     
-    int32_t sent_bytes = send(s->_native_socket, buffer, buffer_size, flags);
+    int32_t sent_bytes = send(s->_native_handle, buffer, buffer_size, flags);
     if (sent_bytes == CS_SOCKET_ERROR) {
         s->connected = false;
-        CS_CLOSE_SOCKET(s->_native_socket);
+        CS_CLOSE_SOCKET(s->_native_handle);
     }
     return sent_bytes;
 }

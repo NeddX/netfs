@@ -31,24 +31,53 @@ ThreadArg net_server_handler(ThreadArg args) {
 
     usize sent_bytes = 0;
     while (s->connected) {
-        NetPacket* packet = NetPacket_New(NetPacketType_Message, NULL, 0);
-
         printf("> ");
-        fgets(buffer, BUFFER_SIZE, stdin);
+
+        char* f = fgets(buffer, BUFFER_SIZE, stdin);
+        if (f == NULL || *f == '\n')
+            continue;
+
         char* n = strrchr(buffer, '\n');
         *n = 0;
 
         parse_command(buffer, &cmd_args, &args_size, &arg_count);
 
         if (!strcmp(cmd_args[0], "ls")) {
-            packet->header.id = NetPacketType_ListEntries;
-            NetPacket_Send(s, &packet);
+            NetPacket* packet = NetPacket_New(NetPacketType_ListEntries, NULL, 0);
+            NetPacket_Send(s, packet);
+            NetPacket_Dispose(packet);
         } else if (!strcmp(cmd_args[0], "fget")) {
-            packet->header.id = NetPacketType_FileDownloadRequest;
+            NetPacket* packet = NetPacket_New(NetPacketType_FileDownloadRequest, NULL, 0);
             NetPacket_AddData(packet, (u8*)cmd_args[1], strlen(cmd_args[1]) + 1);
-            NetPacket_Send(s, &packet);
+            NetPacket_Send(s, packet);
+            NetPacket_Dispose(packet);
+
+            packet = NetPacket_Receive(s);
+            if (packet) {
+                if (packet->header.id == NetPacketType_Error) {
+                    printf("Received an error from the server: %s\n", (const char*)packet->buffer);
+                } else if (packet->header.id == NetPacketType_FileInfo) {
+                    const usize file_size = *(usize*)packet->buffer;
+                    usize bytes_received = 0;
+
+                    puts("Download started.");
+                    FILE* fs = fopen(cmd_args[1], "w");
+                    if (fs) {
+                        while (bytes_received < file_size) {
+                            NetPacket* file_packet = NetPacket_Receive(s);
+                            bytes_received += file_packet->header.size;
+                            fwrite(file_packet->buffer, bytes_received, 1, fs);
+                            NetPacket_Dispose(file_packet);
+                            printf("\rProgress: %f   ", (bytes_received / file_size) * 100.0);
+                        }
+                        puts("\nDownload finished.");
+                        fclose(fs);
+                    }
+                }
+            }
+            NetPacket_Dispose(packet);
         } else if (!strcmp(cmd_args[0], "fup")) {
-            packet->header.id = NetPacketType_FileUploadRequest;
+            NetPacket* packet = NetPacket_New(NetPacketType_FileUploadRequest, NULL, 0);
             NetPacket_AddData(packet, (u8*)cmd_args[1], strlen(cmd_args[1]) + 1);
 
             usize file_size;
@@ -65,10 +94,12 @@ ThreadArg net_server_handler(ThreadArg args) {
 
             printf("File: %s Size: %zu\n", cmd_args[1], file_size);
             NetPacket_AddData(packet, (u8*)file_size, sizeof(usize));
-            NetPacket_Send(s, &packet);
+            NetPacket_Send(s, packet);
+            NetPacket_Dispose(packet);
+        } else if (!strcmp(cmd_args[0], "exit")) {
+            Socket_Shutdown(s, CS_SD_BOTH);
+            Socket_Close(s);
         }
-        
-        NetPacket_Dispose(packet);
     }
 
     free(cmd_args);
@@ -106,33 +137,24 @@ i32 main(const i32 argc, const char* argv[]) {
     Thread* server_handler = Thread_New(&attr);
 
     while (server->connected) {
-        NetPacket* recv_packet = NetPacket_New(NetPacketType_None, NULL, 0);
+        NetPacket* recv_packet = NetPacket_Receive(server);
 
-        i32 res = Socket_Receieve(server, (u8*)&recv_packet->header, sizeof(recv_packet->header), 0);
-        if (res == CS_SOCKET_ERROR) {
-lc1:
-            fputs("Disconnected from server.\n", stderr);
-            NetPacket_Dispose(recv_packet);
-            break;
-        }
+        if (!recv_packet)
+            continue;
 
         switch (recv_packet->header.id) {
             case NetPacketType_Message:
-                NetPacket_AddData(recv_packet, NULL, recv_packet->header.size);
-                res = Socket_Receieve(server, recv_packet->buffer, recv_packet->header.size, 0);
-                if (res == CS_SOCKET_ERROR)
-                    goto lc1;
-                printf("Server: %s\n", (const char*)packet->buffer);
+                printf("\n%s", (const char*)recv_packet->buffer);
                 break;
             default:
+                printf("Received packet. Type: %s\n", NetPacket_GetTypeStr(recv_packet));
                 break;
         }
 
         NetPacket_Dispose(recv_packet);
     }
 
-    // NOTE: Terminating a thread doesn't dispose the Thread object.
-    Thread_Terminate(server_handler);
+    Thread_Join(server_handler);
     Thread_Dispose(server_handler);
     Socket_Dispose(server);
     return 0;
