@@ -114,17 +114,36 @@ ThreadArg net_connection_handler(ThreadArg args) {
                     usize file_size = ftell(fs);
                     fseek(fs, 0, SEEK_SET);
 
+                    send_packet->header.id = NetPacketType_FileInfo;
                     NetPacket_AddData(send_packet, (u8*)&file_size, sizeof(file_size));
-                    NetPacket_Send(c->socket, send_packet);
+                    i32 res = NetPacket_Send(c->socket, send_packet);
                     NetPacket_Dispose(send_packet);
+                    if (res == CS_SOCKET_ERROR) {
+lc2:
+                        fputs("Download failed.\n", stderr);
+                        break;
+                    }
 
                     const usize FILE_BUFFER_SIZE = 2048;
                     usize bytes_sent = 0;
                     u8* buffer = (u8*)malloc(FILE_BUFFER_SIZE);
                     while (bytes_sent < file_size) {
                         bytes_sent = fread(buffer, FILE_BUFFER_SIZE, 1, fs);
+                        if (bytes_sent == 0) {
+                            if (feof(fs))
+                                bytes_sent = file_size;
+                            else if (ferror(fs)) {
+                                send_packet = NetPacket_New(NetPacketType_Error, (const u8*)"File read error", strlen("File read error") + 1);
+                                res = NetPacket_Send(c->socket, send_packet);
+                                NetPacket_Dispose(send_packet);
+                                if (res == CS_SOCKET_ERROR) {
+                                    goto lc2;
+                                }
+                                break;
+                            }
+                        }
                         send_packet = NetPacket_New(NetPacketType_FileDownloadData, buffer, bytes_sent);
-                        while (send_packet) NetPacket_Send(c->socket, send_packet);
+                        NetPacket_Send(c->socket, send_packet);
                         NetPacket_Dispose(send_packet);
                     }
                     free(buffer);
