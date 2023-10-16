@@ -44,7 +44,7 @@ fi
 
 killall nfserver
 killall nfclient
-find ./ -type f -perm +111 -exec sh -c 'cp {} ../../bin && echo exec: {}' \;
+find ./ -type f -executable -exec sh -c 'cp {} ../../bin && echo exec: {}' \;
 cp ../../assets/* ../../bin
 
 echo "Build finished."
